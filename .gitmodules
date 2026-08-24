@@ -4,4 +4,5 @@
 	branch = feat/juicity
 [submodule "ray2sing"]
 	path = ray2sing
-	url = git@github.com:hiddify/ray2sing.git
+	url = https://github.com/Zothie/ray2sing.git
+	branch = feat/juicity
