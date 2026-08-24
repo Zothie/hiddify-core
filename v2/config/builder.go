@@ -266,12 +266,22 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 	// 		InterruptExistConnections: true,
 	// 	},
 	// }
+	// "auto" walks the profiles in the order the subscription lists them and
+	// uses the first one that is actually reachable, instead of the fastest.
+	// Under state censorship the fastest node is usually the nearest one, which
+	// keeps winning the latency contest while being throttled to uselessness —
+	// so order, not speed, is what the user actually means by "pick a working
+	// one". Falls back to lowest-delay if the core does not know the strategy.
+	autoStrategy := "priority"
+	if opt.BalancerStrategy == "lowest-delay" {
+		autoStrategy = "lowest-delay"
+	}
 	urlTest := option.Outbound{
 		Type: C.TypeBalancer,
 		Tag:  OutboundURLTestTag,
 		Options: &option.BalancerOutboundOptions{
 			Outbounds:            tags,
-			Strategy:             "lowest-delay",
+			Strategy:             autoStrategy,
 			DelayAcceptableRatio: 2,
 			// URL:       opt.ConnectionTestUrl,
 			// URLs:      opt.ConnectionTestUrls,
