@@ -56,7 +56,7 @@ const (
 
 var (
 	OutboundMainDetour       = OutboundSelectTag
-	OutboundWARPConfigDetour = OutboundDirectFragmentTag
+	OutboundWARPConfigDetour = ""
 	PredefinedOutboundTags   = []string{OutboundDirectTag, OutboundBypassTag, OutboundSelectTag, OutboundURLTestTag, OutboundDNSTag, OutboundDirectFragmentTag, WARPConfigTag}
 )
 
@@ -135,7 +135,7 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 	// inbound==warp over proxies
 	// outbound==proxies over warp
 	OutboundMainDetour = OutboundSelectTag
-	OutboundWARPConfigDetour = OutboundDirectFragmentTag
+	OutboundWARPConfigDetour = ""
 	hasPsiphon := false
 	for _, out := range input.Outbounds {
 
@@ -360,7 +360,15 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 				Type: C.TypeDirect,
 				Options: &option.DirectOutboundOptions{
 					DialerOptions: option.DialerOptions{
-						TCPFastOpen: false,
+						// TLS fragmentation is commented out below, which used to
+						// leave this outbound completely empty — and newer
+						// sing-box refuses to start at all when anything detours
+						// to an empty direct outbound. Setting one harmless
+						// explicit field keeps it distinguishable from a bare
+						// direct while fragmentation stays disabled.
+						TCPFastOpen:        false,
+						TCPMultiPath:       false,
+						UDPFragmentDefault: true,
 
 						// TLSFragment: option.TLSFragmentOptions{
 						// 	Enabled: true,

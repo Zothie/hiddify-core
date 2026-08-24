@@ -60,7 +60,13 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 		return err
 	}
 
-	direct_detour := OutboundDirectFragmentTag
+	// direct-fragment exists only to carry TLS fragmentation options, which are
+	// currently commented out in builder.go — leaving it an empty clone of
+	// direct. Newer sing-box rejects a detour to an empty direct outbound
+	// outright ("detour to an empty direct outbound makes no sense") and the
+	// whole core refuses to start. Point DNS at plain direct instead; the
+	// behaviour is identical while fragmentation is disabled.
+	direct_detour := ""
 	if strings.HasPrefix(opt.DirectDnsAddress, "udp://") || !strings.Contains(opt.DirectDnsAddress, "://") {
 		direct_detour = ""
 	}
@@ -69,7 +75,10 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 	if err != nil {
 		return err
 	}
-	trick_dns, err := getDNSServerOptions(DNSTricksDirectTag, "https://dns.cloudflare.com/dns-query#fragment=300", DNSDirectTag, OutboundDirectFragmentTag)
+	// Route the trick DNS through plain direct too. direct-fragment carries no
+	// options while TLS fragmentation is disabled, and sing-box refuses to start
+	// when anything detours to an outbound it considers empty.
+	trick_dns, err := getDNSServerOptions(DNSTricksDirectTag, "https://dns.cloudflare.com/dns-query#fragment=300", DNSDirectTag, "")
 	if err != nil {
 		return err
 	}
