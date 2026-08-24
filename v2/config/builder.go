@@ -284,12 +284,20 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 		},
 	}
 
+	balanceStrategy := opt.BalancerStrategy
+	if balanceStrategy == "" {
+		balanceStrategy = "round-robin"
+	}
 	balancer := option.Outbound{
 		Type: C.TypeBalancer,
 		Tag:  OutboundRoundRobinTag,
 		Options: &option.BalancerOutboundOptions{
-			Outbounds:            tags,
-			Strategy:             opt.BalancerStrategy,
+			Outbounds: tags,
+			// Never emit an empty strategy: the core rejects it at RUNTIME with
+			// "unknown load balance strategy", and sing-box check does NOT catch
+			// it — so a fresh install with no saved preference would pass
+			// validation and then fail to start.
+			Strategy:             balanceStrategy,
 			DelayAcceptableRatio: 2,
 			// URL:       opt.ConnectionTestUrl,
 			// URLs:      opt.ConnectionTestUrls,
