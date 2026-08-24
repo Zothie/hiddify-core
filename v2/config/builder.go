@@ -284,6 +284,12 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 		},
 	}
 
+	// The "balance" group is deliberately a LOAD SPREADER, not a chooser — that
+	// is what the auto group ("lowest") is for. round-robin is therefore the
+	// right default here, and differs from the auto group's throughput default
+	// on purpose. Note the consequence: round-robin keeps sending a share of
+	// traffic to a frozen node, so a user behind an active censor wants the auto
+	// group, not this one.
 	balanceStrategy := opt.BalancerStrategy
 	if balanceStrategy == "" {
 		balanceStrategy = "round-robin"
