@@ -40,7 +40,7 @@ const (
 	OutboundBypassTag = "bypass §hide§"
 	// OutboundBlockTag          = "block §hide§"
 	OutboundSelectTag         = "select"
-	OutboundURLTestTag        = "lowest"
+	OutboundURLTestTag        = "best"
 	OutboundRoundRobinTag     = "balance"
 	OutboundDNSTag            = "dns-out §hide§"
 	OutboundDirectFragmentTag = "direct-fragment §hide§"
@@ -284,36 +284,6 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 		},
 	}
 
-	// The "balance" group is deliberately a LOAD SPREADER, not a chooser — that
-	// is what the auto group ("lowest") is for. round-robin is therefore the
-	// right default here, and differs from the auto group's throughput default
-	// on purpose. Note the consequence: round-robin keeps sending a share of
-	// traffic to a frozen node, so a user behind an active censor wants the auto
-	// group, not this one.
-	balanceStrategy := opt.BalancerStrategy
-	if balanceStrategy == "" {
-		balanceStrategy = "round-robin"
-	}
-	balancer := option.Outbound{
-		Type: C.TypeBalancer,
-		Tag:  OutboundRoundRobinTag,
-		Options: &option.BalancerOutboundOptions{
-			Outbounds: tags,
-			// Never emit an empty strategy: the core rejects it at RUNTIME with
-			// "unknown load balance strategy", and sing-box check does NOT catch
-			// it — so a fresh install with no saved preference would pass
-			// validation and then fail to start.
-			Strategy:             balanceStrategy,
-			DelayAcceptableRatio: 2,
-			// URL:       opt.ConnectionTestUrl,
-			// URLs:      opt.ConnectionTestUrls,
-			// Interval:  badoption.Duration(opt.URLTestInterval.Duration()),
-			// IdleTimeout: badoption.Duration(opt.URLTestIdleTimeout.Duration()),
-			Tolerance: 1,
-			// IdleTimeout:               badoption.Duration(opt.URLTestInterval.Duration().Nanoseconds() * 3),
-			InterruptExistConnections: true,
-		},
-	}
 	defaultSelect := tags[0]
 
 	for _, tag := range tags {
@@ -329,10 +299,14 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 			selectorTags = append([]string{urlTest.Tag}, selectorTags...)
 			defaultSelect = urlTest.Tag
 		} else {
-			outbounds = append([]option.Outbound{balancer, urlTest}, outbounds...)
-			selectorTags = append([]string{urlTest.Tag, balancer.Tag}, selectorTags...)
-			defaultSelect = balancer.Tag
-
+			// Only the "best" group is published. Round-robin was dropped
+			// deliberately: it keeps feeding a share of every request into
+			// whichever node is currently frozen, which is precisely the
+			// failure this build exists to avoid. "best" filters out nodes that
+			// cannot carry data before ranking the rest.
+			outbounds = append([]option.Outbound{urlTest}, outbounds...)
+			selectorTags = append([]string{urlTest.Tag}, selectorTags...)
+			defaultSelect = urlTest.Tag
 		}
 	}
 	selector := option.Outbound{
