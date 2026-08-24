@@ -266,16 +266,7 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 	// 		InterruptExistConnections: true,
 	// 	},
 	// }
-	// "auto" walks the profiles in the order the subscription lists them and
-	// uses the first one that is actually reachable, instead of the fastest.
-	// Under state censorship the fastest node is usually the nearest one, which
-	// keeps winning the latency contest while being throttled to uselessness —
-	// so order, not speed, is what the user actually means by "pick a working
-	// one". Falls back to lowest-delay if the core does not know the strategy.
-	autoStrategy := "priority"
-	if opt.BalancerStrategy == "lowest-delay" {
-		autoStrategy = "lowest-delay"
-	}
+	autoStrategy := autoGroupStrategy(opt)
 	urlTest := option.Outbound{
 		Type: C.TypeBalancer,
 		Tag:  OutboundURLTestTag,
@@ -419,8 +410,59 @@ func setExperimental(options *option.Options, hopt *HiddifyOptions) {
 				Interval:       badoption.Duration(hopt.URLTestInterval.Duration()),
 				DebounceWindow: badoption.Duration(time.Millisecond * 500),
 				IdleTimeout:    badoption.Duration(hopt.URLTestInterval.Duration().Nanoseconds() * 3),
+				Throughput:     throughputProbeOptions(hopt),
 			},
 		}
+	}
+}
+
+const (
+	balancerStrategyThroughput  = "throughput"
+	balancerStrategyPriority    = "priority"
+	balancerStrategyLowestDelay = "lowest-delay"
+)
+
+// autoGroupStrategy decides how the "auto" group picks a profile.
+//
+// The default is "throughput": first discard the profiles that cannot
+// demonstrably move bytes, then among those pick the fastest by measured
+// goodput. This is what the user means by "find the working ones and use the
+// best" — and it is specifically not what latency ranking does. A censor's
+// frozen node answers a ping instantly, so lowest-delay would select it and
+// send traffic into a path that carries nothing; and even among healthy nodes
+// latency ranks by proximity, pinning traffic to a nearby relay over a distant
+// but much faster exit.
+//
+// An explicit user choice always wins over this default.
+func autoGroupStrategy(opt *HiddifyOptions) string {
+	switch opt.BalancerStrategy {
+	case balancerStrategyLowestDelay, balancerStrategyPriority, balancerStrategyThroughput:
+		return opt.BalancerStrategy
+	}
+	return balancerStrategyThroughput
+}
+
+// throughputProbeOptions enables the bulk (sized-GET) probe, but only when a
+// group is actually going to use its verdict.
+//
+// The probe is what lets selection tell a working node from one a censor has
+// frozen — a frozen node completes TLS and answers a latency probe instantly
+// while carrying nothing, so latency alone cannot see the failure. But it costs
+// real user bandwidth on every run, so it stays off for the latency-based
+// strategies that would ignore the result anyway.
+//
+// Returning nil leaves the monitor in its original latency-only behaviour.
+func throughputProbeOptions(hopt *HiddifyOptions) *option.ThroughputProbeOptions {
+	if autoGroupStrategy(hopt) != balancerStrategyThroughput &&
+		hopt.BalancerStrategy != balancerStrategyThroughput {
+		return nil
+	}
+	return &option.ThroughputProbeOptions{
+		// Defaults in the core cover request size, pass mark, cadence, jitter
+		// and backoff. They are deliberately conservative: bulk transfers are
+		// the pattern that arms the censor's per-flow drop penalty, so probing
+		// too eagerly would manufacture the outage it is meant to detect.
+		EveryNCycles: 4,
 	}
 }
 
