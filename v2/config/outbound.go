@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"strings"
 
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -134,9 +136,78 @@ func patchEndpoint(base *option.Endpoint, configOpt HiddifyOptions, staticIPs *m
 	}
 	return base, nil
 }
+
+// physicalOutboundInterface returns the machine's real uplink, or "" when it
+// cannot be determined.
+//
+// WHY THIS MATTERS
+// Delay checks dial through the profile's own dialer, which follows the system
+// routing table. When ANY other VPN is up (Amnezia, WireGuard, a second
+// client), the default route points into that tunnel — so the probe measures
+// the tunnel instead of the profile. Two symptoms follow, both seen here:
+// a remote server 24 ms away answers in 0.5 ms (the local tunnel stack replying,
+// never reaching the server), and a genuinely blocked profile looks healthy
+// because the other VPN carried it. Pinning to the physical link makes the
+// number mean what the user thinks it means: can THIS profile reach the server
+// from THIS machine, regardless of what else is connected.
+func physicalOutboundInterface() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	// Tunnel devices are what we must avoid; they are the thing under test.
+	isVirtual := func(name string) bool {
+		for _, p := range []string{"tun", "tap", "wg", "amn", "utun", "ppp", "docker", "br-", "veth", "lo"} {
+			if strings.HasPrefix(name, p) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, i := range ifaces {
+		if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if isVirtual(i.Name) {
+			continue
+		}
+		addrs, err := i.Addrs()
+		if err != nil || len(addrs) == 0 {
+			continue
+		}
+		// Require a routable IPv4 address: an interface that is up but
+		// unaddressed cannot carry the probe.
+		for _, a := range addrs {
+			if ipn, ok := a.(*net.IPNet); ok && ipn.IP.To4() != nil && !ipn.IP.IsLinkLocalUnicast() {
+				return i.Name
+			}
+		}
+	}
+	return ""
+}
+
 func patchOutbound(base option.Outbound, configOpt HiddifyOptions, staticIPs *map[string][]string) (*option.Outbound, error) {
 
 	base = patchOutboundTLSTricks(base, configOpt)
+
+	// Pin every outbound to the physical uplink so both real traffic and delay
+	// checks leave the machine directly, never through another VPN that happens
+	// to own the default route. Groups and internal outbounds are skipped: they
+	// have no socket of their own, they delegate to their members.
+	if base.Type != C.TypeSelector && base.Type != C.TypeURLTest &&
+		base.Type != C.TypeBalancer && base.Type != C.TypeBlock &&
+		base.Type != C.TypeDNS && base.Type != C.TypeDirect {
+		if opts, ok := base.Options.(option.DialerOptionsWrapper); ok {
+			d := opts.TakeDialerOptions()
+			// Respect an explicit choice; only fill in when unset.
+			if d.BindInterface == "" {
+				if phys := physicalOutboundInterface(); phys != "" {
+					d.BindInterface = phys
+				}
+			}
+			opts.ReplaceDialerOptions(d)
+		}
+	}
 
 	// switch base.Type {
 	// case C.TypeVMess, C.TypeVLESS, C.TypeTrojan, C.TypeShadowsocks:
