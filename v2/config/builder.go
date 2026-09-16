@@ -463,11 +463,22 @@ func throughputProbeOptions(hopt *HiddifyOptions) *option.ThroughputProbeOptions
 }
 
 func setLog(options *option.Options, opt *HiddifyOptions) {
+	// Timestamps are mandatory here, not cosmetic: the only way to tell whether
+	// a stall was the core's doing or the network's is to line the core's own
+	// events up against the per-layer monitor, and without a clock on each line
+	// that correlation is impossible. The log was previously written with none.
+	lvl := opt.LogLevel
+	if lvl == "" || lvl == "warn" {
+		// "warn" hides connection open/close events, which is exactly the
+		// evidence needed when the proxy stops forwarding while the network is
+		// demonstrably fine. "info" costs a few MB a day and is worth it.
+		lvl = "info"
+	}
 	options.Log = &option.LogOptions{
-		Level:        opt.LogLevel,
+		Level:        lvl,
 		Output:       opt.LogFile,
 		Disabled:     false,
-		Timestamp:    false,
+		Timestamp:    true,
 		DisableColor: true,
 	}
 }
@@ -516,10 +527,13 @@ func setInbound(options *option.Options, hopt *HiddifyOptions) {
 		// default:
 
 		// }
+		// v4 only on the tun. With a v6 address present the OS hands the tun
+		// every literal-IPv6 destination too (apps that bypass DNS, e.g.
+		// WebRTC ICE candidates), and none of our servers can carry v6.
+		// Without a v6 route those packets have nowhere to go and the app
+		// falls back to v4 at once instead of waiting on a dead candidate.
+		_ = ipv6Enable
 		opts.Address = []netip.Prefix{netip.MustParsePrefix("172.19.0.1/28")}
-		if ipv6Enable {
-			opts.Address = append(opts.Address, netip.MustParsePrefix("fdfe:dcba:9876::1/126"))
-		}
 
 		options.Inbounds = append(options.Inbounds, tunInbound)
 

@@ -38,24 +38,60 @@ func getDnsAddress(d string) string {
 
 func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string][]string) error {
 	remoteAddr := getDnsAddress(opt.RemoteDnsAddress)
-	fallbackAddr := "https://8.8.8.8/dns-query"
+	// DoH to 8.8.8.8 is blocked here and its plain-UDP form is hijacked, so
+	// neither helps. Quad9 over TCP is reachable and cannot be silently
+	// rewritten the way UDP is.
+	fallbackAddr := "tcp://9.9.9.9"
 	if remoteAddr == fallbackAddr {
 		fallbackAddr = "https://1.0.0.1/dns-query"
 	}
 
-	// if strings.HasPrefix(remoteAddr, "udp://") {
-	// 	remoteAddr = strings.Replace(remoteAddr, "udp://", "tcp://", 1)
-	// }
+	// Never let a DNS query leave as plain UDP.
+	//
+	// From 26 Aug 2026 TSPU performs targeted DNAT on UDP packets whose payload
+	// is a DNS query bound for a well-known resolver: the packet is redirected
+	// to the state resolver (NSDI) and a forged NXDOMAIN comes back bearing the
+	// original source address, so the client has no way to notice. Measured
+	// behaviour: the interception is UDP-only - the identical query over TCP
+	// returns the real answers.
+	//
+	// Rewriting udp:// to tcp:// therefore removes the attack surface entirely
+	// rather than merely making it less likely, and it costs one extra
+	// round-trip. Applied to every resolver, including the direct one, because
+	// the direct resolver runs outside the tunnel and is the only query a
+	// middlebox can still observe.
+	forceTCP := func(addr string) string {
+		if strings.HasPrefix(addr, "udp://") {
+			return strings.Replace(addr, "udp://", "tcp://", 1)
+		}
+		// A bare address defaults to UDP in sing-box; make the transport explicit.
+		if !strings.Contains(addr, "://") && addr != "" && addr != "local" {
+			return "tcp://" + addr
+		}
+		return addr
+	}
+	remoteAddr = forceTCP(remoteAddr)
+	fallbackAddr = forceTCP(fallbackAddr)
 
 	remote_dns, err := getDNSServerOptions(DNSRemoteTag, remoteAddr, DNSDirectTag, OutboundMainDetour)
 	if err != nil {
 		return err
 	}
-	remote_dns_fallback, err := getDNSServerOptions(DNSRemoteTagFallback, fallbackAddr, DNSDirectTag, OutboundMainDetour)
+	// The fallback resolver must NOT share the primary's path. Both were routed
+	// through the selected profile, so when that profile stalled the "fallback"
+	// stalled with it and every lookup waited out the full timeout - which is
+	// precisely the failure seen here (8128 cache-wait timeouts, and stalls at
+	// 14:41 and 14:49 where every network layer was demonstrably healthy).
+	//
+	// Sending it out directly costs a little privacy for name lookups only: the
+	// queries still go over TCP to a resolver outside the country, and it is the
+	// difference between a brief hiccup and the browser sitting dead while the
+	// connection underneath is fine.
+	remote_dns_fallback, err := getDNSServerOptions(DNSRemoteTagFallback, fallbackAddr, DNSDirectTag, "")
 	if err != nil {
 		return err
 	}
-	remote_no_warp_dns, err := getDNSServerOptions(DNSRemoteNoWarpTag, opt.RemoteDnsAddress, DNSDirectTag, OutboundWARPConfigDetour)
+	remote_no_warp_dns, err := getDNSServerOptions(DNSRemoteNoWarpTag, forceTCP(opt.RemoteDnsAddress), DNSDirectTag, OutboundWARPConfigDetour)
 	if err != nil {
 		return err
 	}
@@ -71,7 +107,7 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 		direct_detour = ""
 	}
 
-	direct_dns, err := getDNSServerOptions(DNSDirectTag, opt.DirectDnsAddress, DNSLocalTag, direct_detour)
+	direct_dns, err := getDNSServerOptions(DNSDirectTag, forceTCP(opt.DirectDnsAddress), DNSLocalTag, direct_detour)
 	if err != nil {
 		return err
 	}
@@ -110,6 +146,14 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 			DNSClientOptions: option.DNSClientOptions{
 				IndependentCache: opt.IndependentDNSCache && !C.IsIos,
 				DisableExpire:    true,
+				// Answer only A records. Neither relay has working IPv6 egress
+				// (the exit's v6 is configured but dead), so every AAAA the
+				// phone received turned into "no IPv4 address available" at
+				// the relay. Google Meet in particular offers v6 ICE
+				// candidates first and dropped the call while they failed.
+				// With v4-only answers the client never learns those
+				// addresses and goes straight to v4.
+				Strategy: option.DomainStrategy(C.DomainStrategyIPv4Only),
 			},
 			Final: DNSMultiRemoteTag,
 

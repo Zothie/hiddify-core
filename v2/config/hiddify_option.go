@@ -109,9 +109,18 @@ func DefaultHiddifyOptions() *HiddifyOptions {
 	return &HiddifyOptions{
 		EnableNTP: true,
 		DNSOptions: DNSOptions{
-			RemoteDnsAddress:        "1.1.1.1",
+			// Resolve through the tunnel, not at a public resolver. TSPU DNATs plain
+			// UDP DNS aimed at 1.1.1.1 / 8.8.8.8 to the state resolver and returns a
+			// forged NXDOMAIN, and the client cannot tell. Queries sent inside the
+			// tunnel are not DNS packets on the wire here, so there is nothing to
+			// rewrite. tcp:// as a second line of defence: the interception is
+			// UDP-only, so even outside the tunnel this survives.
+			RemoteDnsAddress:        "tcp://9.9.9.9",
 			RemoteDnsDomainStrategy: option.DomainStrategy(dns.DomainStrategyAsIS),
-			DirectDnsAddress:        "1.1.1.1",
+			// The direct resolver runs OUTSIDE the tunnel by design (it must resolve
+			// the tunnel's own server address), so it is the one query a middlebox
+			// can still see. Use TCP: the documented interception only rewrites UDP.
+			DirectDnsAddress:        "tcp://9.9.9.9",
 			DirectDnsDomainStrategy: option.DomainStrategy(dns.DomainStrategyAsIS),
 			IndependentDNSCache:     false,
 			EnableFakeDNS:           false,

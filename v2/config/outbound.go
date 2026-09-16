@@ -194,7 +194,15 @@ func patchOutbound(base option.Outbound, configOpt HiddifyOptions, staticIPs *ma
 	// checks leave the machine directly, never through another VPN that happens
 	// to own the default route. Groups and internal outbounds are skipped: they
 	// have no socket of their own, they delegate to their members.
-	if base.Type != C.TypeSelector && base.Type != C.TypeURLTest &&
+	//
+	// Desktop only. On Android and iOS the VPN service already keeps its own
+	// sockets out of the tunnel (protect() via AutoDetectInterfaceControl), and
+	// a bind_interface makes the core call PlatformInterface.GetInterfaces()
+	// across the gomobile bridge, which aborted the process with
+	// "Unknown reference: 42" on every connect. Pinning to wlan0 there would
+	// also strand the tunnel the moment the phone moves to cellular.
+	if !C.IsAndroid && !C.IsIos &&
+		base.Type != C.TypeSelector && base.Type != C.TypeURLTest &&
 		base.Type != C.TypeBalancer && base.Type != C.TypeBlock &&
 		base.Type != C.TypeDNS && base.Type != C.TypeDirect {
 		if opts, ok := base.Options.(option.DialerOptionsWrapper); ok {
