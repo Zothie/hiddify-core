@@ -94,12 +94,14 @@ require (
 	github.com/gaissmai/bart v0.18.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
 	github.com/go-json-experiment/json v0.0.0-20250813024750-ebf49471dced // indirect
+	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v0.0.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/nftables v0.2.1-0.20240414091927-5e242ec57806 // indirect
+	github.com/google/pprof v0.0.0-20250208200701-d0013a598941 // indirect
 	github.com/grafov/m3u8 v0.0.0-20171211212457-6ab8f28ed427 // indirect
 	github.com/hdevalence/ed25519consensus v0.2.0 // indirect
 	github.com/hiddify/hmrd_multi_resolver_dns v0.0.0-20260429114007-8d809dc33d0e // indirect
@@ -121,6 +123,7 @@ require (
 	github.com/mroth/weightedrand v1.0.0 // indirect
 	github.com/mzz2017/disk-bloom v1.0.1 // indirect
 	github.com/net2share/vaydns v0.2.6 // indirect
+	github.com/onsi/ginkgo/v2 v2.22.2 // indirect
 	github.com/openai/openai-go/v3 v3.26.0 // indirect
 	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/pion/datachannel v1.5.5 // indirect
@@ -211,6 +214,7 @@ require (
 	gitlab.com/yawning/chacha20.git v0.0.0-20230427033715-7877545b1b37 // indirect
 	gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/goptlib v1.5.0 // indirect
 	go.etcd.io/bbolt v1.3.11 // indirect
+	go.uber.org/mock v0.5.2 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
