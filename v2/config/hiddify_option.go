@@ -72,6 +72,16 @@ type RouteOptions struct {
 	BypassLAN              bool                  `json:"bypass-lan,omitempty"`
 	AllowConnectionFromLAN bool                  `json:"allow-connection-from-lan,omitempty"`
 	BlockQuic              bool                  `json:"block-quic,omitempty"`
+	// DirectGamePorts routes the classic game-server port set (Steam:
+	// UDP 27000:27100, UDP 4380, TCP 27015) to the direct outbound so
+	// latency-sensitive game traffic never enters the proxy. See
+	// directBypassRules in builder.go.
+	DirectGamePorts bool `json:"direct-game-ports,omitempty"`
+	// DirectProcessNames routes traffic of the listed processes (Windows /
+	// Linux / macOS image names, e.g. "RadminVPN.exe") to the direct outbound
+	// via sing-box process_name rules. Meaningful on desktop only; the app
+	// sends an empty list on Android where per-app routing is package-based.
+	DirectProcessNames []string `json:"direct-process-names,omitempty"`
 }
 
 type TLSTricks struct {

@@ -1039,6 +1039,10 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			},
 		})
 	}
+	// Game/process bypass rules. They are appended AFTER every built-in rule
+	// and BEFORE the Final catch-all below, so the catch-all cannot send
+	// latency-sensitive game traffic into the proxy first.
+	routeRules = append(routeRules, directBypassRules(hopt)...)
 	options.Route = &option.RouteOptions{
 		Rules:               routeRules,
 		Final:               OutboundMainDetour,
@@ -1164,6 +1168,90 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 	}
 	// }
 	return nil
+}
+
+// directBypassRules builds the "don't tunnel" rules requested by the app:
+//
+//   - DirectGamePorts: the classic game-server port set. Ports follow Valve's
+//     documented Steam requirements (help.steampowered.com, "Required Ports
+//     for Steam"): UDP 27000-27100 game server traffic, UDP 4380 P2P/
+//     matchmaking, TCP 27015 Source dedicated server query/RCON. sing-box
+//     port ranges use the colon format ("27000:27100").
+//   - DirectProcessNames: desktop-only process_name rules (sing-box resolves
+//     process owners when a rule needs them; the router enables process
+//     lookup automatically for such rules).
+//
+// All rules route to the plain direct outbound. The historical "bypass
+// §hide§" outbound is NOT instantiated by this builder, so referencing it
+// would fail sing-box validation.
+func directBypassRules(hopt *HiddifyOptions) []option.Rule {
+	rules := []option.Rule{}
+	if hopt.DirectGamePorts {
+		rules = append(rules,
+			option.Rule{
+				Type: C.RuleTypeDefault,
+				DefaultOptions: option.DefaultRule{
+					RawDefaultRule: option.RawDefaultRule{
+						Network:   []string{"udp"},
+						PortRange: []string{"27000:27100"},
+					},
+					RuleAction: option.RuleAction{
+						Action: C.RuleActionTypeRoute,
+						RouteOptions: option.RouteActionOptions{
+							Outbound: OutboundDirectTag,
+						},
+					},
+				},
+			},
+			option.Rule{
+				Type: C.RuleTypeDefault,
+				DefaultOptions: option.DefaultRule{
+					RawDefaultRule: option.RawDefaultRule{
+						Network: []string{"udp"},
+						Port:    []uint16{4380},
+					},
+					RuleAction: option.RuleAction{
+						Action: C.RuleActionTypeRoute,
+						RouteOptions: option.RouteActionOptions{
+							Outbound: OutboundDirectTag,
+						},
+					},
+				},
+			},
+			option.Rule{
+				Type: C.RuleTypeDefault,
+				DefaultOptions: option.DefaultRule{
+					RawDefaultRule: option.RawDefaultRule{
+						Network: []string{"tcp"},
+						Port:    []uint16{27015},
+					},
+					RuleAction: option.RuleAction{
+						Action: C.RuleActionTypeRoute,
+						RouteOptions: option.RouteActionOptions{
+							Outbound: OutboundDirectTag,
+						},
+					},
+				},
+			},
+		)
+	}
+	if len(hopt.DirectProcessNames) > 0 {
+		rules = append(rules, option.Rule{
+			Type: C.RuleTypeDefault,
+			DefaultOptions: option.DefaultRule{
+				RawDefaultRule: option.RawDefaultRule{
+					ProcessName: hopt.DirectProcessNames,
+				},
+				RuleAction: option.RuleAction{
+					Action: C.RuleActionTypeRoute,
+					RouteOptions: option.RouteActionOptions{
+						Outbound: OutboundDirectTag,
+					},
+				},
+			},
+		})
+	}
+	return rules
 }
 
 func patchHiddifyWarpFromConfig(out *option.Outbound, opt HiddifyOptions) *option.Outbound {
