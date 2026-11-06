@@ -233,3 +233,16 @@ message StopRequest{
 message LANIPResponse {
   string ip = 1;
 }
+
+message GetAdaptiveStateRequest {
+  string tag = 1;
+}
+
+message GetAdaptiveStateResponse {
+  string state = 1;
+  string active_id = 2;
+  string last_good = 3;
+  uint64 attempts = 4;
+  uint64 generation = 5;
+  bool closed = 6;
+}

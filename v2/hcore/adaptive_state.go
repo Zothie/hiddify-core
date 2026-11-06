@@ -1,7 +1,9 @@
 package hcore
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/sagernet/sing-box/protocol/hydra/adaptive"
 )
@@ -16,16 +18,6 @@ type AdaptiveSnapshot struct {
 	Closed     bool   `json:"closed"`
 }
 
-// Stop-gap pending gRPC codegen: the Core service cannot gain a
-// GetAdaptiveState rpc until protoc-gen-go-grpc is available. The Makefile
-// protos target regenerates every proto file with that plugin, and neither
-// protoc-gen-go-grpc nor protoc-gen-go is installed or present in the module
-// cache (GOPROXY=off), so regenerating the service stubs here would mean
-// hand-editing generated files. The app side is blocked the same way: the
-// Dart protoc_plugin is absent, so hcore_service.pbgrpc.dart cannot be
-// regenerated. Until codegen lands, this helper is reachable from Go callers
-// only, and AdaptiveStateJSON is the single place to wire into the new rpc.
-//
 // AdaptiveStateJSON returns the coordinator state of the hydra adaptive
 // outbound registered under tag. Unknown tags report {"state":"unknown"};
 // live coordinators report "active" (a verified tunnel exists), "connecting"
@@ -47,4 +39,30 @@ func AdaptiveStateJSON(tag string) string {
 		return `{"state":"unknown"}`
 	}
 	return string(out)
+}
+
+// GetAdaptiveState implements the Core gRPC rpc of the same name. It parses
+// AdaptiveStateJSON so the state derivation stays in this one place; an
+// unregistered tag reports State "unknown".
+func (s *CoreService) GetAdaptiveState(ctx context.Context, req *GetAdaptiveStateRequest) (*GetAdaptiveStateResponse, error) {
+	snap, err := decodeAdaptiveSnapshot(AdaptiveStateJSON(req.GetTag()))
+	if err != nil {
+		return nil, err
+	}
+	return &GetAdaptiveStateResponse{
+		State:      snap.State,
+		ActiveId:   snap.ActiveID,
+		LastGood:   snap.LastGood,
+		Attempts:   snap.Attempts,
+		Generation: snap.Generation,
+		Closed:     snap.Closed,
+	}, nil
+}
+
+func decodeAdaptiveSnapshot(raw string) (AdaptiveSnapshot, error) {
+	var snap AdaptiveSnapshot
+	if err := json.Unmarshal([]byte(raw), &snap); err != nil {
+		return AdaptiveSnapshot{}, fmt.Errorf("decode adaptive state: %w", err)
+	}
+	return snap, nil
 }

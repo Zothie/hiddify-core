@@ -29,6 +29,7 @@ service Core {
   rpc LogListener (LogRequest) returns (stream LogMessage); 
   rpc Close (CloseRequest) returns (hcommon.Empty);
   rpc GetLANIP (hcommon.Empty) returns (LANIPResponse);
+  rpc GetAdaptiveState (GetAdaptiveStateRequest) returns (GetAdaptiveStateResponse);
 }
 
 
