@@ -26,6 +26,7 @@ import (
 	hcommon "github.com/hiddify/hiddify-core/v2/hcommon"
 	"github.com/hiddify/hiddify-core/v2/hello"
 	hutils "github.com/hiddify/hiddify-core/v2/hutils"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/experimental/libbox"
 	"github.com/sagernet/sing-box/log"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -37,6 +38,9 @@ import (
 type CoreService struct {
 	UnimplementedCoreServer
 }
+
+// Kept as a package-local seam so host tests exercise the Android boundaries.
+var androidPlatformRequired = C.IsAndroid
 
 func Setup(params *SetupRequest, platformInterface libbox.PlatformInterface) error {
 	defer config.DeferPanicToError("setup", func(err error) {
@@ -50,6 +54,13 @@ func Setup(params *SetupRequest, platformInterface libbox.PlatformInterface) err
 	}
 	mu.Lock()
 	defer mu.Unlock()
+	if androidPlatformRequired && platformInterface == nil {
+		if params.Mode == SetupMode_GRPC_BACKGROUND || params.Mode == SetupMode_GRPC_BACKGROUND_INSECURE {
+			return fmt.Errorf("Android core service requires a platform interface")
+		}
+		// UI setup may omit the platform, but must not erase the service's.
+		platformInterface = static.globalPlatformInterface
+	}
 	if grpcServer[params.Mode] != nil {
 		Log(LogLevel_WARNING, LogType_CORE, "grpcServer already started")
 		return nil

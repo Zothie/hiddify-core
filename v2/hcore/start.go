@@ -83,6 +83,9 @@ func StartService(ctx context.Context, in *StartRequest) (coreResponse *CoreInfo
 	static.lock.Lock()
 	defer static.lock.Unlock()
 
+	if androidPlatformRequired && static.globalPlatformInterface == nil {
+		return nil, fmt.Errorf("Android core start requires a platform interface")
+	}
 	if static.CoreState != CoreStates_STOPPED {
 		// return errorWrapper(MessageType_ALREADY_STARTED, fmt.Errorf("instance already started"))
 		return &CoreInfoResponse{

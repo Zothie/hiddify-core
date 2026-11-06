@@ -33,7 +33,7 @@ func (h *MobilePlatformInterface) UsePlatformAutoDetectInterfaceControl() bool {
 
 func (h *MobilePlatformInterface) AutoDetectInterfaceControl(fd int32) error {
 	if h.platform == nil {
-		return nil
+		return fmt.Errorf("required platform socket protection: platform is nil")
 	}
 	return h.platform.AutoDetectInterfaceControl(fd)
 }
