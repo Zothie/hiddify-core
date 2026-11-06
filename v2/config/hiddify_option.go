@@ -82,6 +82,11 @@ type RouteOptions struct {
 	// via sing-box process_name rules. Meaningful on desktop only; the app
 	// sends an empty list on Android where per-app routing is package-based.
 	DirectProcessNames []string `json:"direct-process-names,omitempty"`
+	// HydraAdaptiveDisable is the escape hatch for hydra adaptive groups: when
+	// set, subscription links that carry the ag= group marker stay separate
+	// static outbounds instead of being merged into one adaptive outbound
+	// (see collapseHydraAdaptiveGroups in builder.go). Default false.
+	HydraAdaptiveDisable bool `json:"hydra-adaptive-disable,omitempty"`
 }
 
 type TLSTricks struct {

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	sync "sync"
 	"time"
@@ -137,7 +138,11 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 	OutboundMainDetour = OutboundSelectTag
 	OutboundWARPConfigDetour = ""
 	hasPsiphon := false
-	for _, out := range input.Outbounds {
+	profileOutbounds, err := collapseHydraAdaptiveGroups(input.Outbounds, opt)
+	if err != nil {
+		return err
+	}
+	for _, out := range profileOutbounds {
 
 		if contains(PredefinedOutboundTags, out.Tag) {
 			continue
@@ -356,6 +361,222 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 	)
 
 	return nil
+}
+
+// collapseHydraAdaptiveGroups merges the hydra outbounds that ray2sing marked
+// as members of one adaptive group (the ag= link param, with the shared group
+// settings pa/pb/pi/pd riding on every member link) into ONE adaptive hydra
+// outbound per group: its Adaptive.Candidates carry one entry per member, in
+// profile order, and the member outbounds are removed from the output.
+//
+// Semantics:
+//   - HydraAdaptiveDisable (the escape hatch): no merging at all — every
+//     member stays a plain static outbound with the adaptive plumbing fields
+//     stripped, so the output matches the pre-adaptive link format. Transport
+//     (at=) is kept, it is a per-outbound setting, not group state.
+//   - A lone link marked with ag= has no group to adapt across; it stays a
+//     normal static outbound. Its group marker is likewise stripped.
+//   - All members of a merged group must agree on the relay pubkey and on
+//     pa/pb/pi/pd; a disagreement fails the build (the producer mixed links
+//     that would probe against the wrong proof or interface).
+//   - The merged outbound takes the group id as its tag: stable across
+//     profile refreshes, where member remarks and their position-suffix
+//     counter (ray2sing appends " § N") churn. A group id that collides with
+//     another surviving tag fails the build instead of producing a config
+//     sing-box rejects for duplicate tags.
+//
+// The input slice and its options are never mutated: parsed profiles may be
+// reused by the caller.
+func collapseHydraAdaptiveGroups(outbounds []option.Outbound, opt *HiddifyOptions) ([]option.Outbound, error) {
+	hydraOpts := map[int]*option.HydraOutboundOptions{}
+	groups := map[string][]int{}
+	var groupOrder []string
+	for i, ob := range outbounds {
+		if ob.Type != C.TypeHydra {
+			continue
+		}
+		h, ok := ob.Options.(*option.HydraOutboundOptions)
+		if !ok || h.AdaptiveGroup == "" {
+			continue
+		}
+		hydraOpts[i] = h
+		if _, ok := groups[h.AdaptiveGroup]; !ok {
+			groupOrder = append(groupOrder, h.AdaptiveGroup)
+		}
+		groups[h.AdaptiveGroup] = append(groups[h.AdaptiveGroup], i)
+	}
+	if len(groups) == 0 {
+		return outbounds, nil
+	}
+
+	// stripHydraPlumbing returns a copy of h without the adaptive plumbing
+	// fields, ready to serve as a plain static outbound.
+	stripHydraPlumbing := func(h *option.HydraOutboundOptions) *option.HydraOutboundOptions {
+		stripped := *h
+		stripped.AdaptiveGroup = ""
+		stripped.AdaptiveProof = ""
+		stripped.AdaptiveProofBytes = 0
+		stripped.AdaptiveInterface = ""
+		stripped.AdaptiveDNS = nil
+		return &stripped
+	}
+
+	if opt.HydraAdaptiveDisable {
+		out := make([]option.Outbound, len(outbounds))
+		copy(out, outbounds)
+		for i := range hydraOpts {
+			out[i] = option.Outbound{
+				Type:    out[i].Type,
+				Tag:     out[i].Tag,
+				Options: stripHydraPlumbing(hydraOpts[i]),
+			}
+		}
+		return out, nil
+	}
+
+	replace := map[int]option.Outbound{}
+	remove := map[int]bool{}
+	mergedTags := map[string]bool{}
+	for _, gid := range groupOrder {
+		members := groups[gid]
+		if len(members) < 2 {
+			// Lone member: stays static, group marker stripped.
+			i := members[0]
+			replace[i] = option.Outbound{
+				Type:    outbounds[i].Type,
+				Tag:     outbounds[i].Tag,
+				Options: stripHydraPlumbing(hydraOpts[i]),
+			}
+			continue
+		}
+		if err := hydraAdaptiveGroupConsistent(gid, members, hydraOpts); err != nil {
+			return nil, err
+		}
+		first := hydraOpts[members[0]]
+		seenIDs := map[string]bool{}
+		candidates := make([]option.HydraAdaptiveCandidateOptions, 0, len(members))
+		for _, mi := range members {
+			m := hydraOpts[mi]
+			id := hydraCandidateID(outbounds[mi].Tag, seenIDs)
+			seenIDs[id] = true
+			candidates = append(candidates, option.HydraAdaptiveCandidateOptions{
+				ID:            id,
+				ServerOptions: m.ServerOptions,
+				DialerOptions: m.DialerOptions,
+				Path:          m.Path,
+				TLS:           m.TLS,
+				Transport:     m.Transport,
+			})
+		}
+		replace[members[0]] = option.Outbound{
+			Type: C.TypeHydra,
+			Tag:  gid,
+			Options: &option.HydraOutboundOptions{
+				// The head carries the first member's endpoint so the merged
+				// outbound stays a well-formed hydra config for every path
+				// that ignores Adaptive; the adaptive outbound dials through
+				// Candidates.
+				Adaptive: &option.HydraAdaptiveOptions{
+					Candidates:         candidates,
+					ProofURL:           first.AdaptiveProof,
+					ProofBytes:         first.AdaptiveProofBytes,
+					PhysicalInterface:  first.AdaptiveInterface,
+					PhysicalDNSServers: first.AdaptiveDNS,
+				},
+				DialerOptions: first.DialerOptions,
+				ServerOptions: first.ServerOptions,
+				Pubkey:        first.Pubkey,
+				Path:          first.Path,
+				TLS:           first.TLS,
+			},
+		}
+		mergedTags[gid] = true
+		for _, mi := range members[1:] {
+			remove[mi] = true
+		}
+	}
+
+	out := make([]option.Outbound, 0, len(outbounds))
+	for i, ob := range outbounds {
+		if remove[i] {
+			continue
+		}
+		if r, ok := replace[i]; ok {
+			ob = r
+		}
+		out = append(out, ob)
+	}
+	// A group id must not collide with any other surviving tag: sing-box
+	// refuses a config with duplicate outbound tags at startup.
+	for gid := range mergedTags {
+		count := 0
+		for _, ob := range out {
+			if ob.Tag == gid {
+				count++
+			}
+		}
+		if count > 1 {
+			return nil, fmt.Errorf("hydra adaptive group tag %q collides with an existing outbound tag", gid)
+		}
+	}
+	return out, nil
+}
+
+// hydraAdaptiveGroupConsistent rejects a group whose members disagree on the
+// relay pubkey or on any of the shared adaptive settings (pa/pb/pi/pd). The
+// settings ride identically on every member link by contract; a disagreement
+// means the producer mixed links that do not share one proof or physical
+// layer, which would make candidates prove against the wrong endpoint.
+func hydraAdaptiveGroupConsistent(gid string, members []int, hydraOpts map[int]*option.HydraOutboundOptions) error {
+	first := hydraOpts[members[0]]
+	for _, mi := range members[1:] {
+		m := hydraOpts[mi]
+		if m.Pubkey != first.Pubkey {
+			return fmt.Errorf("hydra adaptive group %q: members disagree on pubkey", gid)
+		}
+		if m.AdaptiveProof != first.AdaptiveProof {
+			return fmt.Errorf("hydra adaptive group %q: members disagree on proof url", gid)
+		}
+		if m.AdaptiveProofBytes != first.AdaptiveProofBytes {
+			return fmt.Errorf("hydra adaptive group %q: members disagree on proof bytes", gid)
+		}
+		if m.AdaptiveInterface != first.AdaptiveInterface {
+			return fmt.Errorf("hydra adaptive group %q: members disagree on physical interface", gid)
+		}
+		if !slices.Equal(m.AdaptiveDNS, first.AdaptiveDNS) {
+			return fmt.Errorf("hydra adaptive group %q: members disagree on physical dns", gid)
+		}
+	}
+	return nil
+}
+
+// hydraCandidateID derives a candidate ID from a member's outbound tag.
+// ray2sing appends a position counter (" § N") to every parsed link tag to
+// keep tags unique; the counter shifts whenever the subscription changes, so
+// the stable remark (the tag without the suffix) is the better ID. If the
+// remark is empty or already used inside the group, the full tag is used.
+func hydraCandidateID(tag string, seen map[string]bool) string {
+	id := tag
+	if i := strings.LastIndex(tag, " § "); i >= 0 {
+		remark := tag[:i]
+		suffix := tag[i+len(" § "):]
+		if isDecimalDigits(suffix) && remark != "" && !seen[remark] {
+			id = remark
+		}
+	}
+	return id
+}
+
+func isDecimalDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func isBlockedConnectionTestUrl(d string) bool {
