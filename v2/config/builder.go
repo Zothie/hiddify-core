@@ -4,10 +4,13 @@ import (
 	context "context"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"math/rand"
 	"net"
 	"net/netip"
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	sync "sync"
@@ -468,6 +471,34 @@ func collapseHydraAdaptiveGroups(outbounds []option.Outbound, opt *HiddifyOption
 				Transport:     m.Transport,
 			})
 		}
+		adaptive := &option.HydraAdaptiveOptions{
+			Candidates:         candidates,
+			ProofURL:           first.AdaptiveProof,
+			ProofBytes:         first.AdaptiveProofBytes,
+			PhysicalInterface:  first.AdaptiveInterface,
+			PhysicalDNSServers: first.AdaptiveDNS,
+		}
+		// Persistence: the last-good candidate hint lives under the app files
+		// dir the host plumbs in via HiddifyOptions.WorkingDir. The hint is
+		// scoped to one physical network by NetworkKey, so a group without a
+		// caller-supplied network key gets no state file at all (the runtime
+		// refuses StatePath without NetworkKey; deriving the key is a
+		// separately documented rule and is deliberately not done here). With
+		// no dir resolvable, persistence is skipped with a visible reason — a
+		// path is never guessed.
+		if strings.TrimSpace(adaptive.NetworkKey) != "" {
+			dir := strings.TrimSpace(opt.WorkingDir)
+			if dir == "" {
+				log.Printf("hydra adaptive: persistence disabled for group %q: no app files dir resolvable", gid)
+			} else {
+				statePath := filepath.Join(dir, "data", "hydra-adaptive", hydraAdaptiveStateFileName(gid))
+				if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+					log.Printf("hydra adaptive: persistence disabled for group %q: state dir: %v", gid, err)
+				} else {
+					adaptive.StatePath = statePath
+				}
+			}
+		}
 		replace[members[0]] = option.Outbound{
 			Type: C.TypeHydra,
 			Tag:  gid,
@@ -476,13 +507,7 @@ func collapseHydraAdaptiveGroups(outbounds []option.Outbound, opt *HiddifyOption
 				// outbound stays a well-formed hydra config for every path
 				// that ignores Adaptive; the adaptive outbound dials through
 				// Candidates.
-				Adaptive: &option.HydraAdaptiveOptions{
-					Candidates:         candidates,
-					ProofURL:           first.AdaptiveProof,
-					ProofBytes:         first.AdaptiveProofBytes,
-					PhysicalInterface:  first.AdaptiveInterface,
-					PhysicalDNSServers: first.AdaptiveDNS,
-				},
+				Adaptive:      adaptive,
 				DialerOptions: first.DialerOptions,
 				ServerOptions: first.ServerOptions,
 				Pubkey:        first.Pubkey,
@@ -520,6 +545,28 @@ func collapseHydraAdaptiveGroups(outbounds []option.Outbound, opt *HiddifyOption
 		}
 	}
 	return out, nil
+}
+
+// hydraAdaptiveStateFileName maps a group id to a flat, filesystem-safe
+// state file name. The group id comes from the ag= link param and may carry
+// arbitrary characters; only [A-Za-z0-9._-] survive, the rest is replaced
+// with '_' and the name is length-capped so it cannot escape the state dir.
+func hydraAdaptiveStateFileName(gid string) string {
+	name := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '_', r == '-':
+			return r
+		}
+		return '_'
+	}, gid)
+	if len(name) > 64 {
+		name = name[:64]
+	}
+	if name == "" || name == "." || name == ".." {
+		name = "group"
+	}
+	return name + ".json"
 }
 
 // hydraAdaptiveGroupConsistent rejects a group whose members disagree on the

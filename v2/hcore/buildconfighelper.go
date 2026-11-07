@@ -29,6 +29,11 @@ func BuildConfig(ctx context.Context, in *StartRequest) (*option.Options, error)
 	Log(LogLevel_DEBUG, LogType_CORE, "Building Config...")
 
 	readOpt := &config.ReadOptions{Content: in.ConfigContent, Path: in.ConfigPath}
+	// Re-assert the app files dir on every build: ChangeHiddifySettings
+	// replaces static.HiddifyOptions wholesale, so this cannot be set once.
+	if static.HiddifyOptions != nil {
+		static.HiddifyOptions.WorkingDir = sWorkingPath
+	}
 	if !in.EnableRawConfig {
 		// hcontent, err := json.MarshalIndent(static.HiddifyOptions, "", " ")
 		// if err != nil {
@@ -150,6 +155,9 @@ func GenerateConfig(ctx context.Context, in *GenerateConfigRequest) (*GenerateCo
 	if static.HiddifyOptions == nil {
 		static.HiddifyOptions = config.DefaultHiddifyOptions()
 	}
+	// Re-assert the app files dir on every build: ChangeHiddifySettings
+	// replaces static.HiddifyOptions wholesale, so this cannot be set once.
+	static.HiddifyOptions.WorkingDir = sWorkingPath
 	config, err := config.ParseBuildConfigBytes(ctx, static.HiddifyOptions, &config.ReadOptions{Path: in.Path})
 	if err != nil {
 		return nil, err

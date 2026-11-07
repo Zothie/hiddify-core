@@ -87,6 +87,13 @@ type RouteOptions struct {
 	// static outbounds instead of being merged into one adaptive outbound
 	// (see collapseHydraAdaptiveGroups in builder.go). Default false.
 	HydraAdaptiveDisable bool `json:"hydra-adaptive-disable,omitempty"`
+	// WorkingDir is the app files dir the host sets programmatically right
+	// before each config build (hcore Setup plumbing: grpc_server.go stores
+	// SetupRequest.WorkingDir in sWorkingPath). Not part of the JSON
+	// settings: collapsed hydra adaptive groups place their last-good state
+	// files under it (see collapseHydraAdaptiveGroups). Empty on hosts that
+	// never Setup with a real dir — adaptive persistence stays off then.
+	WorkingDir string `json:"-"`
 }
 
 type TLSTricks struct {
