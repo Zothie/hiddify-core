@@ -387,6 +387,16 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 //     counter (ray2sing appends " § N") churn. A group id that collides with
 //     another surviving tag fails the build instead of producing a config
 //     sing-box rejects for duplicate tags.
+//   - Every tuning axis parsed onto a member link (frag ranges, split delay,
+//     disorder, pad ladder, rtc engine, TLS surface) rides onto that member's
+//     candidate; a candidate axis left at zero inherits the FIRST member's
+//     value (candidate-else-group-default, mirroring the nested resolver's
+//     axesOrDefault), and the first member's axes also become the group
+//     defaults on the merged head for the runtime parent fallback. max_frame
+//     is copied verbatim and its zero-candidate inheritance stays governed
+//     by the RecipeID rule inside the nested outbound. Members differing
+//     only in axes are never merged here: one candidate per member, and the
+//     axes-aware effective-identity dedup lives in the nested outbound.
 //
 // The input slice and its options are never mutated: parsed profiles may be
 // reused by the caller.
@@ -456,20 +466,27 @@ func collapseHydraAdaptiveGroups(outbounds []option.Outbound, opt *HiddifyOption
 			return nil, err
 		}
 		first := hydraOpts[members[0]]
+		groupDefaults := hydraMemberAxes(first)
 		seenIDs := map[string]bool{}
 		candidates := make([]option.HydraAdaptiveCandidateOptions, 0, len(members))
 		for _, mi := range members {
 			m := hydraOpts[mi]
 			id := hydraCandidateID(outbounds[mi].Tag, seenIDs)
 			seenIDs[id] = true
-			candidates = append(candidates, option.HydraAdaptiveCandidateOptions{
-				ID:            id,
-				ServerOptions: m.ServerOptions,
-				DialerOptions: m.DialerOptions,
-				Path:          m.Path,
-				TLS:           m.TLS,
-				Transport:     m.Transport,
-			})
+			// One candidate per member — members differing only in axes stay
+			// distinct here (the axes-aware effective-identity dedup is the
+			// nested outbound's job). Tuning axes resolve candidate-else-
+			// group-default; max_frame is copied verbatim, its zero-candidate
+			// inheritance guarded by the RecipeID rule in the nested outbound.
+			c := hydraMemberAxes(m)
+			c.ID = id
+			c.ServerOptions = m.ServerOptions
+			c.DialerOptions = m.DialerOptions
+			c.Path = m.Path
+			c.TLS = m.TLS
+			c.Transport = m.Transport
+			c.NegotiateMaxFrame = m.NegotiateMaxFrame
+			candidates = append(candidates, hydraCandidateAxes(c, groupDefaults))
 		}
 		adaptive := &option.HydraAdaptiveOptions{
 			Candidates:         candidates,
@@ -513,6 +530,32 @@ func collapseHydraAdaptiveGroups(outbounds []option.Outbound, opt *HiddifyOption
 				Pubkey:        first.Pubkey,
 				Path:          first.Path,
 				TLS:           first.TLS,
+				// The first member's axes ride on the head as the group
+				// defaults: candidates above were resolved against them, and
+				// the runtime parent fallback (axesOrDefault, the RecipeID-
+				// guarded max_frame rule) reads them from the head exactly
+				// as it reads a solo tuned link's passthrough fields.
+				NegotiateMaxFrame:   first.NegotiateMaxFrame,
+				FragFirstMin:        groupDefaults.FragFirstMin,
+				FragFirstMax:        groupDefaults.FragFirstMax,
+				FragRestMin:         groupDefaults.FragRestMin,
+				FragRestMax:         groupDefaults.FragRestMax,
+				FragSplitDelayMs:    groupDefaults.FragSplitDelayMs,
+				Disorder:            groupDefaults.Disorder,
+				DisorderDelayMs:     groupDefaults.DisorderDelayMs,
+				PadBuckets:          groupDefaults.PadBuckets,
+				MaxPad:              groupDefaults.MaxPad,
+				BigPadMax:           groupDefaults.BigPadMax,
+				RTCChunk:            groupDefaults.RTCChunk,
+				RTCWindow:           groupDefaults.RTCWindow,
+				RTORtoMinMs:         groupDefaults.RTORtoMinMs,
+				RTORtoMaxMs:         groupDefaults.RTORtoMaxMs,
+				RTCBufferCap:        groupDefaults.RTCBufferCap,
+				RTCKeepaliveEveryMs: groupDefaults.RTCKeepaliveEveryMs,
+				TLSFragment:         groupDefaults.TLSFragment,
+				TLSMinVersion:       groupDefaults.TLSMinVersion,
+				TLSMaxVersion:       groupDefaults.TLSMaxVersion,
+				TLSALPN:             groupDefaults.TLSALPN,
 			},
 		}
 		mergedTags[gid] = true
@@ -612,6 +655,110 @@ func hydraCandidateID(tag string, seen map[string]bool) string {
 		}
 	}
 	return id
+}
+
+// hydraMemberAxes views the tuning-axis passthrough fields of one parsed
+// member link (HydraOutboundOptions) as a candidate axis set — the
+// builder-side twin of the nested resolver's hydraParentAxes
+// (protocol/hydra/axes.go). Identity fields (ID, endpoints, TLS, transport)
+// stay zero; NegotiateMaxFrame is not an axis here (see hydraCandidateAxes).
+func hydraMemberAxes(h *option.HydraOutboundOptions) option.HydraAdaptiveCandidateOptions {
+	return option.HydraAdaptiveCandidateOptions{
+		FragFirstMin:        h.FragFirstMin,
+		FragFirstMax:        h.FragFirstMax,
+		FragRestMin:         h.FragRestMin,
+		FragRestMax:         h.FragRestMax,
+		FragSplitDelayMs:    h.FragSplitDelayMs,
+		Disorder:            h.Disorder,
+		DisorderDelayMs:     h.DisorderDelayMs,
+		PadBuckets:          h.PadBuckets,
+		MaxPad:              h.MaxPad,
+		BigPadMax:           h.BigPadMax,
+		RTCChunk:            h.RTCChunk,
+		RTCWindow:           h.RTCWindow,
+		RTORtoMinMs:         h.RTORtoMinMs,
+		RTORtoMaxMs:         h.RTORtoMaxMs,
+		RTCBufferCap:        h.RTCBufferCap,
+		RTCKeepaliveEveryMs: h.RTCKeepaliveEveryMs,
+		TLSFragment:         h.TLSFragment,
+		TLSMinVersion:       h.TLSMinVersion,
+		TLSMaxVersion:       h.TLSMaxVersion,
+		TLSALPN:             h.TLSALPN,
+	}
+}
+
+// hydraCandidateAxes resolves one candidate's axes against the group
+// defaults (the FIRST member's axes), mirroring the nested resolver's
+// axesOrDefault (protocol/hydra/axes.go): a candidate axis left at zero
+// inherits the group default, so a plain link under a tuned first member
+// resolves to the same effective configuration the runtime would compute.
+// NegotiateMaxFrame is deliberately NOT resolved here: its candidate-else-
+// head inheritance is guarded by the RecipeID rule inside the nested
+// outbound (catalogued candidates never inherit), which must stay the
+// single authority for that field.
+func hydraCandidateAxes(member, groupDefaults option.HydraAdaptiveCandidateOptions) option.HydraAdaptiveCandidateOptions {
+	merged := member
+	if merged.FragFirstMin == 0 {
+		merged.FragFirstMin = groupDefaults.FragFirstMin
+	}
+	if merged.FragFirstMax == 0 {
+		merged.FragFirstMax = groupDefaults.FragFirstMax
+	}
+	if merged.FragRestMin == 0 {
+		merged.FragRestMin = groupDefaults.FragRestMin
+	}
+	if merged.FragRestMax == 0 {
+		merged.FragRestMax = groupDefaults.FragRestMax
+	}
+	if merged.FragSplitDelayMs == 0 {
+		merged.FragSplitDelayMs = groupDefaults.FragSplitDelayMs
+	}
+	if !merged.Disorder {
+		merged.Disorder = groupDefaults.Disorder
+	}
+	if merged.DisorderDelayMs == 0 {
+		merged.DisorderDelayMs = groupDefaults.DisorderDelayMs
+	}
+	if len(merged.PadBuckets) == 0 {
+		merged.PadBuckets = groupDefaults.PadBuckets
+	}
+	if merged.MaxPad == 0 {
+		merged.MaxPad = groupDefaults.MaxPad
+	}
+	if merged.BigPadMax == 0 {
+		merged.BigPadMax = groupDefaults.BigPadMax
+	}
+	if merged.RTCChunk == 0 {
+		merged.RTCChunk = groupDefaults.RTCChunk
+	}
+	if merged.RTCWindow == 0 {
+		merged.RTCWindow = groupDefaults.RTCWindow
+	}
+	if merged.RTORtoMinMs == 0 {
+		merged.RTORtoMinMs = groupDefaults.RTORtoMinMs
+	}
+	if merged.RTORtoMaxMs == 0 {
+		merged.RTORtoMaxMs = groupDefaults.RTORtoMaxMs
+	}
+	if merged.RTCBufferCap == 0 {
+		merged.RTCBufferCap = groupDefaults.RTCBufferCap
+	}
+	if merged.RTCKeepaliveEveryMs == 0 {
+		merged.RTCKeepaliveEveryMs = groupDefaults.RTCKeepaliveEveryMs
+	}
+	if !merged.TLSFragment {
+		merged.TLSFragment = groupDefaults.TLSFragment
+	}
+	if merged.TLSMinVersion == "" {
+		merged.TLSMinVersion = groupDefaults.TLSMinVersion
+	}
+	if merged.TLSMaxVersion == "" {
+		merged.TLSMaxVersion = groupDefaults.TLSMaxVersion
+	}
+	if len(merged.TLSALPN) == 0 {
+		merged.TLSALPN = groupDefaults.TLSALPN
+	}
+	return merged
 }
 
 func isDecimalDigits(s string) bool {
