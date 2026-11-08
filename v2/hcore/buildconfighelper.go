@@ -31,8 +31,16 @@ func BuildConfig(ctx context.Context, in *StartRequest) (*option.Options, error)
 	readOpt := &config.ReadOptions{Content: in.ConfigContent, Path: in.ConfigPath}
 	// Re-assert the app files dir on every build: ChangeHiddifySettings
 	// replaces static.HiddifyOptions wholesale, so this cannot be set once.
+	// The catalogue refresher's runtime settings ride the same channel out
+	// of the Setup state (RouteOptions.HydraControl, all json:"-").
 	if static.HiddifyOptions != nil {
 		static.HiddifyOptions.WorkingDir = sWorkingPath
+		static.HiddifyOptions.HydraControl = config.HydraControlOptions{
+			ControlOnion:           sHydraControlOnion,
+			DaemonPath:             sHydraControlDaemonPath,
+			CatalogueRootPubkeyHex: sHydraControlRootPubkeyHex,
+			RefreshTick:            sHydraControlRefreshTick,
+		}
 	}
 	if !in.EnableRawConfig {
 		// hcontent, err := json.MarshalIndent(static.HiddifyOptions, "", " ")

@@ -2,6 +2,7 @@ package hcore
 
 import (
 	"github.com/hiddify/hiddify-core/v2/config"
+	"github.com/hiddify/hiddify-core/v2/hcore/hydra_control"
 	"github.com/sagernet/sing-box/log"
 )
 
@@ -14,6 +15,9 @@ func errorWrapper(state MessageType, err error) (*CoreInfoResponse, error) {
 func StopAndAlert(msgType MessageType, message string) {
 	SetCoreStatus(CoreStates_STOPPED, msgType, message)
 
+	// StopAndAlert closes the box without going through Stop(): stop the
+	// catalogue refresher with it.
+	hydracontrol.StopTrigger()
 	if ss := static.StartedService; ss != nil {
 		ss.CloseService()
 		static.StartedService = nil

@@ -90,6 +90,26 @@ func Setup(params *SetupRequest, platformInterface libbox.PlatformInterface) err
 	sUserID = os.Getuid()
 	sGroupID = os.Getgid()
 
+	// Runtime settings of the signed-catalogue refresher (hydra control).
+	// SetupRequest cannot carry them yet (no proto surface this round), so
+	// the host passes them through the process environment; BuildConfig
+	// re-asserts them into RouteOptions.HydraControl on every build, the
+	// same channel WorkingDir rides. Unset environment = refresher stays
+	// visibly disabled (never a Setup failure).
+	sHydraControlOnion = os.Getenv("HYDRA_CONTROL_ONION")
+	sHydraControlDaemonPath = os.Getenv("HYDRA_CONTROL_DAEMON")
+	sHydraControlRootPubkeyHex = os.Getenv("HYDRA_CONTROL_ROOT_PUBKEY")
+	if tick := os.Getenv("HYDRA_CONTROL_REFRESH_TICK"); tick != "" {
+		if d, err := time.ParseDuration(tick); err == nil {
+			sHydraControlRefreshTick = d
+		} else {
+			Log(LogLevel_WARNING, LogType_CORE, "HYDRA_CONTROL_REFRESH_TICK is not a duration; the refresher uses its default tick")
+		}
+	}
+	if sHydraControlOnion != "" || sHydraControlDaemonPath != "" {
+		Log(LogLevel_DEBUG, LogType_CORE, "hydra control runtime captured from environment")
+	}
+
 	var defaultWriter io.Writer
 	if !params.Debug {
 		defaultWriter = io.Discard
@@ -184,6 +204,14 @@ var (
 	grpcServer map[SetupMode]*grpc.Server = make(map[SetupMode]*grpc.Server)
 	caCertPool                            = x509.NewCertPool()
 	mu                                    = sync.Mutex{}
+)
+
+// hydra-control runtime settings, captured at Setup (see Setup).
+var (
+	sHydraControlOnion         string
+	sHydraControlDaemonPath    string
+	sHydraControlRootPubkeyHex string
+	sHydraControlRefreshTick   time.Duration
 )
 
 // StartGrpcServerByMode starts a gRPC server on the specified address with mTLS.

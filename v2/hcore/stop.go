@@ -6,6 +6,7 @@ import (
 
 	"github.com/hiddify/hiddify-core/v2/config"
 	hcommon "github.com/hiddify/hiddify-core/v2/hcommon"
+	"github.com/hiddify/hiddify-core/v2/hcore/hydra_control"
 )
 
 func (s *CoreService) Stop(ctx context.Context, empty *hcommon.Empty) (*CoreInfoResponse, error) {
@@ -27,6 +28,9 @@ func Stop() (coreResponse *CoreInfoResponse, err error) {
 	defer static.lock.Unlock()
 
 	SetCoreStatus(CoreStates_STOPPING, MessageType_EMPTY, "")
+	// The catalogue refresher is a runtime companion of the box: stop it
+	// with the box (the Run loop's done channel closes once it returns).
+	hydracontrol.StopTrigger()
 	ss := static.StartedService
 	if ss == nil {
 		return SetCoreStatus(CoreStates_STOPPED, MessageType_ALREADY_STOPPED, ""), nil

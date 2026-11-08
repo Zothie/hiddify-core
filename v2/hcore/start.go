@@ -10,11 +10,13 @@ import (
 	"github.com/hiddify/hiddify-core/v2/config"
 	"github.com/hiddify/hiddify-core/v2/db"
 	hcommon "github.com/hiddify/hiddify-core/v2/hcommon"
+	"github.com/hiddify/hiddify-core/v2/hcore/hydra_control"
 	service_manager "github.com/hiddify/hiddify-core/v2/service_manager"
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/experimental/libbox"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/hydra"
 	"github.com/sagernet/sing/service"
 )
 
@@ -157,5 +159,38 @@ func StartService(ctx context.Context, in *StartRequest) (coreResponse *CoreInfo
 		}
 	}
 
+	// The box is up: start the process-wide signed-catalogue refresher when
+	// the built config carries live adaptive outbounds (they registered
+	// their swap targets during construction). Never fails the start.
+	maybeStartHydraControl()
+
 	return SetCoreStatus(CoreStates_STARTED, MessageType_EMPTY, ""), nil
+}
+
+// maybeStartHydraControl starts the catalogue refresher for the just-started
+// box. It runs whenever the box has adaptive outbounds, even when the
+// runtime settings are incomplete: hydracontrol then lands in a VISIBLE
+// disabled/error state (StatusJSON) — honest-disable doctrine, never a
+// silent skip. A box without adaptive outbounds constructs nothing (the
+// default StatusJSON already names the unconstructed runtime). Singleton:
+// the refresher swaps every registered target by pubkey, so one instance
+// serves the whole process; a still-running previous refresher is left
+// alone.
+func maybeStartHydraControl() {
+	if static.HiddifyOptions == nil || sWorkingPath == "" {
+		return
+	}
+	if len(hydra.CatalogueSwapTargets()) == 0 {
+		Log(LogLevel_DEBUG, LogType_CORE, "hydra control: no adaptive outbound in the built config; refresher not constructed")
+		return
+	}
+	hc := static.HiddifyOptions.HydraControl
+	st := hydracontrol.StartTrigger(hydracontrol.TriggerConfig{
+		WorkingPath:   sWorkingPath,
+		ControlOnion:  hc.ControlOnion,
+		DaemonPath:    hc.DaemonPath,
+		RootPubkeyHex: hc.CatalogueRootPubkeyHex,
+		RefreshTick:   hc.RefreshTick,
+	})
+	Log(LogLevel_INFO, LogType_CORE, fmt.Sprintf("hydra control trigger: state=%s detail=%s", st.State, st.Detail))
 }

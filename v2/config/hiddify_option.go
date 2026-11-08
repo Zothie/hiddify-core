@@ -5,6 +5,7 @@ import (
 	reflect "reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sagernet/sing-box/option"
 	dns "github.com/sagernet/sing-dns"
@@ -94,6 +95,33 @@ type RouteOptions struct {
 	// files under it (see collapseHydraAdaptiveGroups). Empty on hosts that
 	// never Setup with a real dir — adaptive persistence stays off then.
 	WorkingDir string `json:"-"`
+	// HydraControl is the signed-catalogue refresher's runtime wiring; see
+	// HydraControlOptions. Runtime-only plumbing, re-asserted per config
+	// build by hcore exactly like WorkingDir.
+	HydraControl HydraControlOptions `json:"-"`
+}
+
+// HydraControlOptions carries the runtime settings of the signed-catalogue
+// refresher (v2/hcore/hydra_control). Runtime-only plumbing, not settings
+// JSON: every field is json:"-" and hcore re-asserts them per config build
+// from the Setup state (grpc_server.go captures them from the process
+// environment because SetupRequest has no proto surface for them), the same
+// pattern as RouteOptions.WorkingDir.
+type HydraControlOptions struct {
+	// ControlOnion is the control service's onion address; empty keeps the
+	// refresher visibly disabled (state=disabled in StatusJSON).
+	ControlOnion string `json:"-"`
+	// DaemonPath is the tor-control-daemon binary; a missing binary keeps
+	// the refresher visibly disabled.
+	DaemonPath string `json:"-"`
+	// CatalogueRootPubkeyHex is the catalogue's Ed25519 verification root,
+	// hex. REQUIRED while ControlOnion is set: its absence fails the
+	// refresher start with a state=error status — a wrong root must never
+	// verify.
+	CatalogueRootPubkeyHex string `json:"-"`
+	// RefreshTick is the catalogue refresh period; zero uses the refresher
+	// default (1h, production-clamped to [15m, 24h]).
+	RefreshTick time.Duration `json:"-"`
 }
 
 type TLSTricks struct {

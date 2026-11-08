@@ -68,6 +68,10 @@ type Config struct {
 	Interval time.Duration
 	// FetchTimeout bounds one fetch+verify+swap cycle; default 2m.
 	FetchTimeout time.Duration
+	// ExtraArgs is appended verbatim to the daemon command line (the
+	// controlclient mock/test-mode seam). Must stay empty in production;
+	// only the trigger's test wiring sets it.
+	ExtraArgs []string
 }
 
 func (c Config) interval() time.Duration {
@@ -113,8 +117,20 @@ func (c Config) disableReason() string {
 type Refresher struct {
 	cfg Config
 
+	// testInterval bypasses the production interval clamp in in-process
+	// trigger tests only; production always ticks through Config.interval.
+	testInterval time.Duration
+
 	mu     sync.Mutex
 	status Status
+}
+
+// tickInterval is the effective refresh period.
+func (r *Refresher) tickInterval() time.Duration {
+	if r.testInterval > 0 {
+		return r.testInterval
+	}
+	return r.cfg.interval()
 }
 
 // New validates nothing eagerly: a zero-ish config constructs a DISABLED
@@ -144,6 +160,7 @@ func (r *Refresher) Run(ctx context.Context) error {
 		SocksAddr:    r.cfg.SocksAddr,
 		DataDir:      r.cfg.DataDir,
 		ControlOnion: r.cfg.ControlOnion,
+		ExtraArgs:    r.cfg.ExtraArgs,
 	})
 	if err != nil {
 		r.setStatus("disabled", "daemon start: "+err.Error())
@@ -169,7 +186,7 @@ func (r *Refresher) Run(ctx context.Context) error {
 		// with a weakened (zero) watermark and surface why.
 		r.setStatus("error", "state dir: "+err.Error())
 	}
-	ticker := time.NewTicker(r.cfg.interval())
+	ticker := time.NewTicker(r.tickInterval())
 	defer ticker.Stop()
 	for {
 		if err := r.cycle(ctx, client); err != nil {
