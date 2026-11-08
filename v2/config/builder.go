@@ -431,6 +431,7 @@ func collapseHydraAdaptiveGroups(outbounds []option.Outbound, opt *HiddifyOption
 		stripped.AdaptiveProofBytes = 0
 		stripped.AdaptiveInterface = ""
 		stripped.AdaptiveDNS = nil
+		stripped.AdaptiveASN = ""
 		return &stripped
 	}
 
@@ -494,6 +495,10 @@ func collapseHydraAdaptiveGroups(outbounds []option.Outbound, opt *HiddifyOption
 			ProofBytes:         first.AdaptiveProofBytes,
 			PhysicalInterface:  first.AdaptiveInterface,
 			PhysicalDNSServers: first.AdaptiveDNS,
+			// Catalogue recipe hint ordering (asn= link param); an ordering
+			// hint only, so group members are not required to agree on it —
+			// the first member's value wins.
+			CatalogueASN: first.AdaptiveASN,
 		}
 		// Persistence: the last-good candidate hint lives under the app files
 		// dir the host plumbs in via HiddifyOptions.WorkingDir. The hint is

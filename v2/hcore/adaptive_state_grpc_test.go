@@ -2,6 +2,7 @@ package hcore
 
 import (
 	"context"
+	"maps"
 	"net"
 	"testing"
 	"time"
@@ -36,10 +37,25 @@ func startCoreGrpcTestServer(t *testing.T) CoreClient {
 
 func TestGetAdaptiveStateRPCRoundTrip(t *testing.T) {
 	registerFakeAdaptiveState(t, "grpc-adaptive", adaptive.Snapshot{
-		Generation: 7,
-		ActiveID:   "fi-9",
-		LastGood:   "fi-9",
-		Attempts:   12,
+		Generation:            7,
+		ActiveID:              "fi-9",
+		LastGood:              "fi-9",
+		Attempts:              12,
+		UniqueCandidatesTried: 3,
+		TotalAttempts:         12,
+		SearchElapsed:         900 * time.Millisecond,
+		LastSearchElapsed:     450 * time.Millisecond,
+		SearchInProgress:      true,
+		StateLoaded:           true,
+		StateSaved:            true,
+		StateError:            "hint dropped",
+		Blackout:              true,
+		BlackoutReason:        "offline",
+		CoveragePercent:       70,
+		CoverageTarget:        80,
+		PerCandidate:          map[string]uint64{"fi-9": 12, "de-4": 5},
+		CandidateCount:        5,
+		SwapGeneration:        3,
 	})
 	client := startCoreGrpcTestServer(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -48,13 +64,30 @@ func TestGetAdaptiveStateRPCRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAdaptiveState: %v", err)
 	}
-	// The rpc must return exactly what AdaptiveStateJSON reports.
+	// The rpc must return exactly what AdaptiveStateJSON reports — every
+	// snapshot field, not just the legacy six.
 	want := decodeAdaptiveState(t, AdaptiveStateJSON("grpc-adaptive"))
 	if resp.State != want.State || resp.ActiveId != want.ActiveID || resp.LastGood != want.LastGood ||
-		resp.Generation != want.Generation || resp.Attempts != want.Attempts || resp.Closed != want.Closed {
+		resp.Generation != want.Generation || resp.Attempts != want.Attempts || resp.Closed != want.Closed ||
+		resp.UniqueCandidatesTried != want.UniqueCandidatesTried || resp.TotalAttempts != want.TotalAttempts ||
+		resp.SearchElapsedMs != want.SearchElapsedMs || resp.LastSearchElapsedMs != want.LastSearchElapsedMs ||
+		resp.SearchInProgress != want.SearchInProgress || resp.StateLoaded != want.StateLoaded ||
+		resp.StateSaved != want.StateSaved || resp.StateError != want.StateError ||
+		resp.Blackout != want.Blackout || resp.BlackoutReason != want.BlackoutReason ||
+		resp.CoveragePercent != int32(want.CoveragePercent) || resp.CoverageTarget != int32(want.CoverageTarget) ||
+		resp.DpiGateEnabled != want.DPIGateEnabled || resp.DpiGateReason != want.DPIGateReason ||
+		resp.CandidateCount != int32(want.CandidateCount) || resp.SwapGeneration != want.SwapGeneration ||
+		!maps.Equal(resp.PerCandidate, want.PerCandidate) {
 		t.Fatalf("rpc response = %+v, want JSON-equivalent %+v", resp, want)
 	}
-	if resp.State != "active" || resp.ActiveId != "fi-9" || resp.LastGood != "fi-9" || resp.Generation != 7 || resp.Attempts != 12 || resp.Closed {
+	if resp.State != "active" || resp.ActiveId != "fi-9" || resp.LastGood != "fi-9" || resp.Generation != 7 ||
+		resp.Attempts != 12 || resp.Closed || resp.UniqueCandidatesTried != 3 || resp.TotalAttempts != 12 ||
+		resp.SearchElapsedMs != 900 || resp.LastSearchElapsedMs != 450 || !resp.SearchInProgress ||
+		!resp.StateLoaded || !resp.StateSaved || resp.StateError != "hint dropped" ||
+		!resp.Blackout || resp.BlackoutReason != "offline" ||
+		resp.CoveragePercent != 70 || resp.CoverageTarget != 80 ||
+		resp.CandidateCount != 5 || resp.SwapGeneration != 3 ||
+		len(resp.PerCandidate) != 2 || resp.PerCandidate["fi-9"] != 12 || resp.PerCandidate["de-4"] != 5 {
 		t.Fatalf("rpc response = %+v, want the fake snapshot fields", resp)
 	}
 }

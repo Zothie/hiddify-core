@@ -245,4 +245,28 @@ message GetAdaptiveStateResponse {
   uint64 attempts = 4;
   uint64 generation = 5;
   bool closed = 6;
+  // Full adaptive search snapshot (audit gaps G1+G7).
+  uint64 unique_candidates_tried = 7;
+  uint64 total_attempts = 8;
+  uint64 search_elapsed_ms = 9;
+  uint64 last_search_elapsed_ms = 10;
+  bool search_in_progress = 11;
+  bool state_loaded = 12;
+  bool state_saved = 13;
+  string state_error = 14;
+  bool blackout = 15;
+  string blackout_reason = 16;
+  int32 coverage_percent = 17;
+  int32 coverage_target = 18;
+  map<string, uint64> per_candidate = 19;
+  // Client self-check gate status, sourced from the outbound layer
+  // (hydra dpigate.go): enabled true when the gate is live, reason
+  // empty then, otherwise the failure that kept the gate off.
+  bool dpi_gate_enabled = 20;
+  string dpi_gate_reason = 21;
+  // Candidate set size and hot-swap counter (G2): candidate_count is the
+  // live set size derived at snapshot time; swap_generation increments
+  // only on ReplaceCandidates hot-swaps and stays 0 before the first one.
+  int32 candidate_count = 22;
+  uint64 swap_generation = 23;
 }
