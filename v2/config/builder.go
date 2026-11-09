@@ -379,9 +379,11 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 //     (at=) is kept, it is a per-outbound setting, not group state.
 //   - A lone link marked with ag= has no group to adapt across; it stays a
 //     normal static outbound. Its group marker is likewise stripped.
-//   - All members of a merged group must agree on the relay pubkey and on
-//     pa/pb/pi/pd; a disagreement fails the build (the producer mixed links
-//     that would probe against the wrong proof or interface).
+//   - All members of a merged group must agree on pa/pb/pi/pd; a disagreement
+//     fails the build (the producer mixed links that would probe against the
+//     wrong proof or interface). The relay pubkey is per-candidate instead:
+//     every member's key rides onto its own candidate, so one group may span
+//     relays with different keys.
 //   - The merged outbound takes the group id as its tag: stable across
 //     profile refreshes, where member remarks and their position-suffix
 //     counter (ray2sing appends " § N") churn. A group id that collides with
@@ -486,6 +488,10 @@ func collapseHydraAdaptiveGroups(outbounds []option.Outbound, opt *HiddifyOption
 			c.Path = m.Path
 			c.TLS = m.TLS
 			c.Transport = m.Transport
+			// Per-candidate relay key: members may span relays with different
+			// keys; the runtime uses v.Pubkey first (head key is the empty-
+			// candidate fallback only).
+			c.Pubkey = m.Pubkey
 			c.NegotiateMaxFrame = m.NegotiateMaxFrame
 			candidates = append(candidates, hydraCandidateAxes(c, groupDefaults))
 		}
@@ -617,18 +623,19 @@ func hydraAdaptiveStateFileName(gid string) string {
 	return name + ".json"
 }
 
-// hydraAdaptiveGroupConsistent rejects a group whose members disagree on the
-// relay pubkey or on any of the shared adaptive settings (pa/pb/pi/pd). The
-// settings ride identically on every member link by contract; a disagreement
-// means the producer mixed links that do not share one proof or physical
-// layer, which would make candidates prove against the wrong endpoint.
+// hydraAdaptiveGroupConsistent rejects a group whose members disagree on any
+// of the shared adaptive settings (pa/pb/pi/pd). The settings ride identically
+// on every member link by contract; a disagreement means the producer mixed
+// links that do not share one proof or physical layer, which would make
+// candidates prove against the wrong endpoint. The relay pubkey is NOT part of
+// the shared contract: each member's key rides onto its own candidate (set in
+// the collapse loop) and the runtime resolves the candidate pubkey first,
+// falling back to the head's only when a candidate leaves it empty — so one
+// group may span relays with different keys (e.g. kvm-hop + kh2).
 func hydraAdaptiveGroupConsistent(gid string, members []int, hydraOpts map[int]*option.HydraOutboundOptions) error {
 	first := hydraOpts[members[0]]
 	for _, mi := range members[1:] {
 		m := hydraOpts[mi]
-		if m.Pubkey != first.Pubkey {
-			return fmt.Errorf("hydra adaptive group %q: members disagree on pubkey", gid)
-		}
 		if m.AdaptiveProof != first.AdaptiveProof {
 			return fmt.Errorf("hydra adaptive group %q: members disagree on proof url", gid)
 		}

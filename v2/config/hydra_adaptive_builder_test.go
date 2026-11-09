@@ -349,15 +349,57 @@ func TestHydraAdaptiveLoneMemberStaysStatic(t *testing.T) {
 	}
 }
 
-// Group members must agree on the relay pubkey.
-func TestHydraAdaptiveGroupPubkeyMismatchFails(t *testing.T) {
+// The relay pubkey is per-candidate: one group may span relays with different
+// keys (kvm-hop + kh2 production lanes). Every candidate must carry its own
+// member's key; the shared proof settings must still agree.
+func TestHydraAdaptiveGroupPerCandidatePubkeys(t *testing.T) {
+	// The real production adaptive group: two relays, distinct keys, one
+	// proof origin, wss transport, no physical interface (mobile).
 	sub := strings.Join([]string{
-		"hydra://" + hydraTestPubA + "@10.0.0.1:443/hydra?ag=g&pa=https://p.example/proof&pb=2048#a",
-		"hydra://" + hydraTestPubB + "@10.0.0.2:443/hydra?ag=g&pa=https://p.example/proof&pb=2048#b",
+		"hydra://" + hydraTestPubA + "@103.71.20.24:8443/hydra?tls=1&sni=hydra-relay&ag=hydra-adaptive&pa=https://13.140.91.148.sslip.io:45182/&pb=131072&at=wss#yandex-hydra",
+		"hydra://" + hydraTestPubB + "@201.50.116.132:2087/hydra?tls=1&sni=hydra-relay&ag=hydra-adaptive&pa=https://13.140.91.148.sslip.io:45182/&pb=131072&at=wss#relay2-hydra",
 	}, "\n")
-	_, err := ParseBuildConfig(context.Background(), DefaultHiddifyOptions(), &ReadOptions{Content: sub})
-	if err == nil || !strings.Contains(err.Error(), "pubkey") {
-		t.Fatalf("expected pubkey mismatch build error, got %v", err)
+	opts, err := ParseBuildConfig(context.Background(), DefaultHiddifyOptions(), &ReadOptions{Content: sub})
+	if err != nil {
+		t.Fatalf("two-relay adaptive group must build: %v", err)
+	}
+	var adaptive *option.HydraOutboundOptions
+	for i := range opts.Outbounds {
+		if h, ok := opts.Outbounds[i].Options.(*option.HydraOutboundOptions); ok && h.Adaptive != nil {
+			adaptive = h
+			break
+		}
+	}
+	if adaptive == nil {
+		t.Fatal("no adaptive hydra outbound in built config")
+	}
+	if adaptive.Pubkey != hydraTestPubA+"=" {
+		t.Fatalf("adaptive head pubkey = %q, want first member's %s=", adaptive.Pubkey, hydraTestPubA)
+	}
+	if adaptive.Adaptive.ProofURL != "https://13.140.91.148.sslip.io:45182/" {
+		t.Fatalf("proof url = %q", adaptive.Adaptive.ProofURL)
+	}
+	if adaptive.Adaptive.ProofBytes != 131072 {
+		t.Fatalf("proof bytes = %d", adaptive.Adaptive.ProofBytes)
+	}
+	if adaptive.Adaptive.PhysicalInterface != "" {
+		t.Fatalf("physical interface = %q, want empty (no pi= on mobile)", adaptive.Adaptive.PhysicalInterface)
+	}
+	cs := adaptive.Adaptive.Candidates
+	if len(cs) != 2 {
+		t.Fatalf("candidates = %d, want 2", len(cs))
+	}
+	if cs[0].ID != "yandex-hydra" || cs[1].ID != "relay2-hydra" {
+		t.Fatalf("candidate ids = %q %q, want yandex-hydra relay2-hydra", cs[0].ID, cs[1].ID)
+	}
+	if cs[0].Pubkey != hydraTestPubA+"=" {
+		t.Fatalf("candidate yandex-hydra pubkey = %q", cs[0].Pubkey)
+	}
+	if cs[1].Pubkey != hydraTestPubB+"=" {
+		t.Fatalf("candidate relay2-hydra pubkey = %q", cs[1].Pubkey)
+	}
+	if cs[0].Transport != "wss" || cs[1].Transport != "wss" {
+		t.Fatalf("transports = %q %q, want wss wss", cs[0].Transport, cs[1].Transport)
 	}
 }
 
